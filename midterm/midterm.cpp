@@ -1,7 +1,3 @@
-// Testing3.cpp — Unified Numeric Operations Simulator (RV32) with M Extension
-// Constraint-compliant: All implementation (ALU/MDU) uses explicit bit vectors and boolean logic.
-// Test/IO helpers (int<->bits, hex/bin printing) may use host integers and shifts.
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -272,8 +268,23 @@ string bitsToHex64(const Bits& b){ return bitsToHexN(b); }
 string bitsToBinStr(const Bits& b){ string s=""; for(int i=0;i<(int)b.size();++i){ s += (b[i]?'1':'0'); if((i%8)==7 && i!=(int)b.size()-1) s+="_"; } return s; }
 
 // int<->bits (TEST ONLY)
-Bits intToBits(int value,int width=32){ Bits bits(width); unsigned int mask = 1u<<(width-1); for(int i=0;i<width;++i){ bits[i] = (value & mask) ? 1 : 0; mask >>= 1; } return bits; }
-long long bitsToInt(const Bits& b){ int n=(int)b.size(); unsigned long long v=0; for(int i=0;i<n;++i){ v=(v<<1)| (unsigned long long)b[i]; } if(b[0]) v -= (1ULL<<n); return (long long)v; }
+Bits intToBits(int value,int width=32){ 
+    Bits bits(width); 
+    unsigned int mask = 1u<<(width-1); 
+    for(int i=0;i<width;++i){ 
+        bits[i] = (value & mask) ? 1 : 0; 
+        mask >>= 1; 
+    } 
+    return bits; 
+}
+long long bitsToInt(const Bits& b){ 
+    int n=(int)b.size(); 
+    unsigned long long v=0; 
+    for(int i=0;i<n;++i){ 
+        v=(v<<1)| (unsigned long long)b[i]; 
+    } if(b[0]) v -= (1ULL<<n);
+    return (long long)v;
+}
 
 // ADD/SUB pretty trace
 void printALUTrace(const string& op,const Bits&a,const Bits&b,const Bits&r,const ALUFlags&f){
