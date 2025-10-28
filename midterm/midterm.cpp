@@ -305,6 +305,7 @@ void printMulResult(const Bits&a,const Bits&b,const MulOut& mo,const string& tag
          << " high="<<bitsToHex32(mo.high32)
          << " overflow="<<mo.overflow <<"\n";
 }
+
 void printDivResultSigned(const Bits&a,const Bits&b,const DivPair& d){
     long long qVal = bitsToInt(d.q);
     long long rVal = bitsToInt(d.r);
@@ -313,6 +314,7 @@ void printDivResultSigned(const Bits&a,const Bits&b,const DivPair& d){
          << "; r = " << rVal << " (" << bitsToHex32(d.r) << ")"
          << "; overflow=" << d.overflow << "\n";
 }
+
 void printDivResultUnsigned(const Bits&a,const Bits&b,const DivOut& d){
     unsigned long long qVal = bitsToInt(d.q);
     unsigned long long rVal = bitsToInt(d.r);
@@ -321,6 +323,175 @@ void printDivResultUnsigned(const Bits&a,const Bits&b,const DivOut& d){
          << "; r = " << rVal << " (" << bitsToHex32(d.r) << ")"
          << "; overflow=0\n";
 }
+
+
+// ============================= Section 4: IEEE-754 Float32 Representation =============================
+// Representation: 1 sign bit, 8 exponent bits (bias = 127), 23 fraction bits (implicit 1 for normals)
+// All arithmetic on bits, no host float operations inside encoding logic
+// -------------------------------------------------------------------------------------
+
+struct Float32 {
+    int sign;        // 0 = positive, 1 = negative
+    Bits exponent;   // 8 bits, unsigned with bias 127
+    Bits fraction;   // 23 bits (mantissa without the leading 1)
+};
+
+// ---- Decode a 32-bit float bit-vector into sign, exponent, and fraction ----
+Float32 decodeFloat32(const Bits& bits) {
+    Float32 f;
+    f.sign = bits[0];
+    f.exponent = Bits(bits.begin() + 1, bits.begin() + 9);       // bits[1..8]
+    f.fraction = Bits(bits.begin() + 9, bits.end());             // bits[9..31]
+    return f;
+}
+
+// ---- Encode a Float32 struct back into a 32-bit bit-vector ----
+Bits encodeFloat32(const Float32& f) {
+    Bits bits(32);
+    bits[0] = f.sign;
+    for (int i = 0; i < 8; ++i) bits[1 + i] = f.exponent[i];
+    for (int i = 0; i < 23; ++i) bits[9 + i] = f.fraction[i];
+    return bits;
+}
+
+
+// ============================= Float32 Addition/Subtraction =============================
+// Perform IEEE-754 addition/subtraction using bit operations on sign/exponent/mantissa.
+// Simplified algorithm:  no rounding modes yet (round-to-nearest only).
+
+// Normalize helper: shift fraction left until MSB=1 (for normalized values)
+struct NormResult { Bits frac; int expAdjust; };
+NormResult normalizeFrac(const Bits& frac, int expBias) {
+    Bits f = frac;
+    int shiftCount = 0;
+    while (f[0] == 0 && shiftCount < 24) {  // find leading 1
+        f = shiftLeft1(f);
+        shiftCount++;
+    }
+    return { f, -shiftCount };
+}
+
+// Align exponents by shifting the smaller mantissa right
+void alignExponents(Bits& fracA, Bits& fracB, int& expA, int& expB) {
+    while (expA < expB) { fracA = shiftRight1Logical(fracA); expA++; }
+    while (expB < expA) { fracB = shiftRight1Logical(fracB); expB++; }
+}
+
+// ---- Float addition/subtraction main ----
+Bits floatAddSub(const Bits& a, const Bits& b, bool subtract) {
+    Float32 A = decodeFloat32(a);
+    Float32 B = decodeFloat32(b);
+
+    // Extract exponent & convert to integer (use bitsToInt for bias)
+    int expA = (int)bitsToInt(signExtendTo(A.exponent, 32));
+    int expB = (int)bitsToInt(signExtendTo(B.exponent, 32));
+    expA -= 127; expB -= 127;  // remove bias
+
+    // Build full 24-bit mantissas (implicit 1 for normals)
+    Bits fracA = Bits(24); fracA[0] = 1;
+    for (int i = 0; i < 23; ++i) fracA[i + 1] = A.fraction[i];
+
+    Bits fracB = Bits(24); fracB[0] = 1;
+    for (int i = 0; i < 23; ++i) fracB[i + 1] = B.fraction[i];
+
+    // Align exponents
+    alignExponents(fracA, fracB, expA, expB);
+    int expRes = expA;
+
+    // Perform addition or subtraction on mantissas
+    Bits resFrac;
+    int carry = 0;
+    if (A.sign == B.sign ^ subtract) {
+        // opposite signs => subtraction
+        Bits negB = negateTwos(fracB);
+        resFrac = addBits(fracA, negB, carry);
+    } else {
+        // same sign => addition
+        resFrac = addBits(fracA, fracB, carry);
+    }
+
+    // Normalize result mantissa
+    NormResult norm = normalizeFrac(resFrac, expRes);
+    resFrac = norm.frac;
+    expRes += norm.expAdjust;
+
+    // Re-bias exponent
+    int biasedExp = expRes + 127;
+    Bits expBits = intToBits(biasedExp, 8);
+
+    // Rebuild Float32
+   Float32 R;
+    R.sign = (A.sign ^ subtract) ? 1 : 0;
+    R.exponent = expBits;
+    R.fraction = Bits(23);
+    for (int i = 0; i < 23; ++i)
+    R.fraction[i] = resFrac[i + 1];
+    return encodeFloat32(R);
+}
+
+
+// ============================= Float32 Multiplication =============================
+// Performs IEEE-754 single-precision multiply using bit logic (shift-add multiply)
+// Steps:
+// 1. Decode operands into sign/exponent/mantissa
+// 2. Compute result sign = XOR(signA, signB)
+// 3. Multiply 24-bit mantissas (1.f * 1.f)
+// 4. Add exponents and subtract bias (127)
+// 5. Normalize and round mantissa
+// 6. Re-encode into 32-bit Float32 bit vector
+
+Bits floatMultiply(const Bits& a, const Bits& b) {
+    Float32 A = decodeFloat32(a);
+    Float32 B = decodeFloat32(b);
+
+    // Step 1: Determine sign bit
+    int resultSign = A.sign ^ B.sign;
+
+    // Step 2: Convert exponents to integers and remove bias
+    int expA = (int)bitsToInt(signExtendTo(A.exponent, 32)) - 127;
+    int expB = (int)bitsToInt(signExtendTo(B.exponent, 32)) - 127;
+    int expSum = expA + expB;
+
+    // Step 3: Build 24-bit mantissas (implicit 1 + 23 fraction)
+    Bits mA(24); mA[0] = 1; for (int i = 0; i < 23; ++i) mA[i + 1] = A.fraction[i];
+    Bits mB(24); mB[0] = 1; for (int i = 0; i < 23; ++i) mB[i + 1] = B.fraction[i];
+
+    // Step 4: Multiply mantissas using your integer bit multiplier
+    Bits prod48 = mulUnsigned32x32(mA, mB, false);   // 24x24 product → 48 bits
+    // Normalize: if top bit is 1 at position 0, good; else shift left one
+    int normShift = 0;
+    if (prod48[0] == 1) {
+        // product >= 2.0, shift right one and increment exponent
+        prod48 = shiftRight1Logical(prod48);
+        expSum += 1;
+    }
+
+    // Step 5: Take 24 MSBs (1 + 23 fraction)
+    Bits mant(24); for (int i = 0; i < 24; ++i) mant[i] = prod48[i];
+    Bits frac(23); for (int i = 0; i < 23; ++i) frac[i] = mant[i + 1];
+
+    // Step 6: Re-bias exponent
+    int biasedExp = expSum + 127;
+    Bits expBits = intToBits(biasedExp, 8);
+
+    // Step 7: Pack into Float32
+    Float32 R; R.sign = resultSign; R.exponent = expBits; R.fraction = frac;
+    return encodeFloat32(R);
+}
+
+
+
+
+void printFloat32(const Bits& bits) {
+    Float32 f = decodeFloat32(bits);
+    cout << "Float32 bits: " << bitsToHex32(bits)
+         << " (sign=" << f.sign
+         << ", exp=" << bitsToHexN(f.exponent)
+         << ", frac=" << bitsToHexN(f.fraction) << ")" << endl;
+}
+
+
+
 
 // ============================= Section 3: Main (demo / quick tests) =============================
 int main(){
@@ -369,6 +540,62 @@ int main(){
     Bits UA=intToBits(num1), UB=intToBits(num2);
     auto du = divu_restoring(UA,UB,true);
     printDivResultUnsigned(UA,UB,du);
+
+
+
+     
+    cout << "\n===== IEEE-754 Float32 Decode Tests =*****====\n";
+
+    // Example: +1.0 (0x3F800000), 25 = 0x41C80000
+    Bits f1 = intToBits(-2.5);
+    printFloat32(f1);
+
+    // Example: -2.5 (0xC0200000)         
+    Bits f2 = intToBits(0xC0200000);
+    printFloat32(f2);
+
+
+    cout << "\n===== IEEE-754 Float32 Add/Sub Tests =====\n";
+
+    // Example: 1.5 (0x3FC00000) + 2.25 (0x40100000)
+    Bits fA = intToBits(25);
+    Bits fB = intToBits(2.25);
+
+    cout << "\n--- Float XXXXxamples ---\n";
+    // Print fA using the Float32 helper (vector<int> can't be streamed directly)
+    printFloat32(fA);
+    cout << "\n--- Float XXXXxamples ---\n";
+
+    Bits fSum = floatAddSub(fA, fB, false);
+    cout << "Adding 1.5 + 2.25:\n";         // expect 3.75 (0x40700000)
+    printFloat32(fSum);
+
+    // Example: 5.5 (0x40B00000) − 2.25 (0x40100000)
+    Bits fC = intToBits(0x40B00000);
+    Bits fD = intToBits(0x40100000);
+    Bits fDiff = floatAddSub(fC, fD, true);
+    cout << "Subtracting 5.5 - 2.25:\n";        // expect 3.25 (0x4050000)
+    printFloat32(fDiff);
+
+
+    cout << "\n===== IEEE-754 Float32 Multiply Tests =====\n";
+
+// Example 1: 1.5 * 2.25 = 3.375  (0x3FC00000 * 0x40200000 → 0x40580000)
+    Bits fMulA = intToBits(0x3FC00000);
+    Bits fMulB = intToBits(0x40200000);
+    Bits fMulR = floatMultiply(fMulA, fMulB);
+    cout << "Multiplying 1.5 * 2.25:\n"; 
+     // expect 3.375 (0x40580000)    
+    printFloat32(fMulR);
+
+    // Example 2: -3.5 * 2.0 = -7.0  (0xC0600000 * 0x40000000 → 0xC0E00000)
+    Bits fMulC = intToBits(0xC0600000);
+    Bits fMulD = intToBits(0x40000000);
+    Bits fMulRes = floatMultiply(fMulC, fMulD);
+    cout << "Multiplying -3.5 * 2.0:\n"; 
+     // expect -7.0 (0xC0E00000)    
+    printFloat32(fMulRes);
+
 
     cout << "\nDone.\n";
     return 0;
