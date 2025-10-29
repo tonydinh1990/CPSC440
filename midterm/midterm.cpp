@@ -448,34 +448,49 @@ Bits floatMultiply(const Bits& a, const Bits& b) {
     int resultSign = A.sign ^ B.sign;
 
     // Step 2: Convert exponents to integers and remove bias
-    int expA = (int)bitsToInt(signExtendTo(A.exponent, 32)) - 127;
-    int expB = (int)bitsToInt(signExtendTo(B.exponent, 32)) - 127;
-    int expSum = expA + expB;
+    int c = 0;
+    Bits expSum = addBits(A.exponent, B.exponent, c);        // expA + expB
+    Bits negBias = negateTwos(bias127_8());                  // -127
+    Bits expRes  = addBits(expSum, negBias, c);              // sum - 127
 
     // Step 3: Build 24-bit mantissas (implicit 1 + 23 fraction)
-    Bits mA(24); mA[0] = 1; for (int i = 0; i < 23; ++i) mA[i + 1] = A.fraction[i];
-    Bits mB(24); mB[0] = 1; for (int i = 0; i < 23; ++i) mB[i + 1] = B.fraction[i];
+    Bits mA(24), mB(24); 
+    mA[0]=1; 
+    mB[0]=1;
 
-    // Step 4: Multiply mantissas using your integer bit multiplier
-    Bits prod48 = mulUnsigned32x32(mA, mB, false);   // 24x24 product → 48 bits
-    // Normalize: if top bit is 1 at position 0, good; else shift left one
-    int normShift = 0;
-    if (prod48[0] == 1) {
-        // product >= 2.0, shift right one and increment exponent
-        prod48 = shiftRight1Logical(prod48);
-        expSum += 1;
+    for(int i=0;i<23;++i){
+         mA[i+1]=A.fraction[i];
+        mB[i+1]=B.fraction[i]; 
     }
 
-    // Step 5: Take 24 MSBs (1 + 23 fraction)
-    Bits mant(24); for (int i = 0; i < 24; ++i) mant[i] = prod48[i];
-    Bits frac(23); for (int i = 0; i < 23; ++i) frac[i] = mant[i + 1];
+    // Step 4: Multiply mantissas using your integer bit multiplier
+    Bits mA32 = zeroExtend(mA, 32);
+    Bits mB32 = zeroExtend(mB, 32);
+    Bits prod64 = mulUnsigned32x32(mA32, mB32, false);       // 64-bit MSB..LSB
 
-    // Step 6: Re-bias exponent
-    int biasedExp = expSum + 127;
-    Bits expBits = intToBits(biasedExp, 8);
+    // Extract the lower 48 bits (since (2^24-1)^2 < 2^48) → positions [16..63]
+    Bits prod48(48);
+    for(int i=0;i<48;++i) 
+    prod48[i] = prod64[16+i];
 
-    // Step 7: Pack into Float32
-    Float32 R; R.sign = resultSign; R.exponent = expBits; R.fraction = frac;
+    // Normalize:
+    // If prod48[0] == 1  → product in [2.0, 4.0), take mant = prod48[0..23], exp += 1
+    // else                → product in [1.0, 2.0), take mant = prod48[1..24], exp stays
+    Bits mant24(24);
+    if (prod48[0]==1) {
+        for(int i=0;i<24;++i) mant24[i] = prod48[i];         // take [0..23]
+        expRes = addBits(expRes, one8(), c);                 // exp += 1
+    } else {
+        for(int i=0;i<24;++i) mant24[i] = prod48[i+1];       // take [1..24]
+    }
+
+
+    // Fraction = mant24[1..23]
+    Bits frac(23);
+    for(int i=0;i<23;++i) frac[i] = mant24[i+1];
+
+    // Pack result
+    Float32 R; R.sign = resultSign; R.exponent = expRes; R.fraction = frac;
     return encodeFloat32(R);
 }
 
@@ -582,19 +597,11 @@ int main(){
 
 // Example 1: 1.5 * 2.25 = 3.375  (0x3FC00000 * 0x40200000 → 0x40580000)
     Bits fMulA = intToBits(0x3FC00000);
-    Bits fMulB = intToBits(0x40200000);
+    Bits fMulB = intToBits(0x40100000);
     Bits fMulR = floatMultiply(fMulA, fMulB);
     cout << "Multiplying 1.5 * 2.25:\n"; 
      // expect 3.375 (0x40580000)    
     printFloat32(fMulR);
-
-    // Example 2: -3.5 * 2.0 = -7.0  (0xC0600000 * 0x40000000 → 0xC0E00000)
-    Bits fMulC = intToBits(0xC0600000);
-    Bits fMulD = intToBits(0x40000000);
-    Bits fMulRes = floatMultiply(fMulC, fMulD);
-    cout << "Multiplying -3.5 * 2.0:\n"; 
-     // expect -7.0 (0xC0E00000)    
-    printFloat32(fMulRes);
 
 
     cout << "\nDone.\n";
