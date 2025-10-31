@@ -458,57 +458,23 @@ static void dump_mem_words(const Mem &m, uint32_t addr, size_t words, ostream &o
 }
 
 // ============================== Main ==============================
-int main(int argc, char **argv) {
+   int main() {
+    // Create CPU with 1MB instruction & data memory
+    CPU cpu(1 << 20, 1 << 20);
 
-    // Fast IO
-    ios::sync_with_stdio(false);
-    cin.tie(nullptr);
+    // Enable trace so you can see each instruction
+    cpu.trace = true;
 
-    // Command-line argument parsing
-    if (argc < 2) {
-        cerr << "Usage: ./rv32sim <prog.hex> [--trace] [--imem=MB] [--dmem=MB]\n";
-        return 1;
-    }
+    // Load and run default program (must be in same folder)
+    cpu.load_hex_program("test_base.hex");
+    cpu.run();
 
+    // Show final registers and memory
+    cout << "\n==== FINAL REGISTER DUMP ====\n";
+    cpu.rf.dump(cout);
 
-    // Required: hex program path
-    string hexpath = argv[1];
-    bool trace = false;
-    size_t imem_mb = 1, dmem_mb = 1; // default 1MB each
-
-    // Optional arguments
-    for (int i = 2; i < argc; i++) {
-        string arg = argv[i];
-        if (arg == "--trace") trace = true;
-        else if (arg.rfind("--imem=", 0) == 0) {
-            imem_mb = (size_t)stoul(arg.substr(8));
-        } else if (arg.rfind("--dmem=", 0) == 0) {
-            dmem_mb = (size_t)stoul(arg.substr(8));
-        } else {
-            cerr << "Unknown option: " << arg << "\n";
-            return 1;
-        }
-    }
-
-    // Create CPU and load program
-    try {
-        CPU cpu(imem_mb * (1<<20), dmem_mb * (1<<20));
-        cpu.trace = trace;
-        cpu.load_hex_program(hexpath);
-
-        cpu.run();
-
-        cout << "\n==== FINAL REGISTER DUMP ====" << "\n";
-        cpu.rf.dump(cout);
-
-        // If you used 0x0001_0000 as a data base like in the sample, you can peek a small window:
-        cout << "\n==== DATA MEM [0x00010000 .. 0x00010040) ====" << "\n";
-        dump_mem_words(cpu.dmem, 0x00010000u, 16, cout);
-    }
-    catch (const exception &e) {
-        cerr << "Error: " << e.what() << "\n";
-        return 1;
-    }
+    cout << "\n==== DATA MEM [0x00010000 .. 0x00010040) ====\n";
+    dump_mem_words(cpu.dmem, 0x00010000u, 16, cout);
 
     return 0;
 }
