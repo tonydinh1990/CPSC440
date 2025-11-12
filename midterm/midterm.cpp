@@ -1,6 +1,7 @@
 #include <iostream>
 #include <vector>
 #include <string>
+#include <iomanip>
 using namespace std;
 
 // ============================= Types =============================
@@ -26,13 +27,8 @@ void fullAdder(int a,int b,int cin,int &sum,int &cout){
 // ---- ripple-carry add (unsigned) ----
 Bits addBits(const Bits&A,const Bits&B,int &carryOut){
     int n=(int)A.size(); Bits R(n); int c=0; 
-    for(int i=n-1;i>=0;--i){ 
-        int s,k; 
-        fullAdder(A[i],B[i],c,s,k); 
-        R[i]=s; c=k; 
-    }
-    carryOut=c; 
-    return R;
+    for(int i=n-1;i>=0;--i){ int s,k; fullAdder(A[i],B[i],c,s,k); R[i]=s; c=k; }
+    carryOut=c; return R;
 }
 
 // ---- two's complement negate ----
@@ -269,21 +265,21 @@ string bitsToBinStr(const Bits& b){ string s=""; for(int i=0;i<(int)b.size();++i
 
 // int<->bits (TEST ONLY)
 Bits intToBits(int value,int width=32){ 
-    Bits bits(width); 
+    Bits bits(width);
     unsigned int mask = 1u<<(width-1); 
     for(int i=0;i<width;++i){ 
-        bits[i] = (value & mask) ? 1 : 0; 
-        mask >>= 1; 
-    } 
-    return bits; 
+        bits[i] = (value & mask) ? 1 : 0; mask >>= 1; 
+    } return bits; 
 }
 long long bitsToInt(const Bits& b){ 
     int n=(int)b.size(); 
-    unsigned long long v=0; 
-    for(int i=0;i<n;++i){ 
-        v=(v<<1)| (unsigned long long)b[i]; 
-    } if(b[0]) v -= (1ULL<<n);
-    return (long long)v;
+     long long v=0; 
+     for(int i=0;i<n;++i){ 
+        v=(v<<1)| (unsigned long long)b[i];
+     } 
+     if(b[0]) 
+     v -= (1ULL<<n); 
+     return (long long)v; 
 }
 
 // ADD/SUB pretty trace
@@ -305,7 +301,6 @@ void printMulResult(const Bits&a,const Bits&b,const MulOut& mo,const string& tag
          << " high="<<bitsToHex32(mo.high32)
          << " overflow="<<mo.overflow <<"\n";
 }
-
 void printDivResultSigned(const Bits&a,const Bits&b,const DivPair& d){
     long long qVal = bitsToInt(d.q);
     long long rVal = bitsToInt(d.r);
@@ -314,7 +309,6 @@ void printDivResultSigned(const Bits&a,const Bits&b,const DivPair& d){
          << "; r = " << rVal << " (" << bitsToHex32(d.r) << ")"
          << "; overflow=" << d.overflow << "\n";
 }
-
 void printDivResultUnsigned(const Bits&a,const Bits&b,const DivOut& d){
     unsigned long long qVal = bitsToInt(d.q);
     unsigned long long rVal = bitsToInt(d.r);
@@ -324,11 +318,81 @@ void printDivResultUnsigned(const Bits&a,const Bits&b,const DivOut& d){
          << "; overflow=0\n";
 }
 
-
 // ============================= Section 4: IEEE-754 Float32 Representation =============================
 // Representation: 1 sign bit, 8 exponent bits (bias = 127), 23 fraction bits (implicit 1 for normals)
 // All arithmetic on bits, no host float operations inside encoding logic
 // -------------------------------------------------------------------------------------
+
+
+// ---- Correct IEEE-754 converters ---- NEW
+Bits floatToBits(float value) {
+    Bits bits(32);
+    if (value == 0.0f) return bits; // all zeros
+
+    // Step 1: Sign
+    int sign = (value < 0) ? 1 : 0;
+    if (sign) value = -value;
+
+    // Step 2: Normalize to get exponent and mantissa
+    int exponent = 0;
+    float frac = value;
+
+    // Normalize: find exponent so that 1.0 <= frac < 2.0
+    while (frac >= 2.0f) { frac /= 2.0f; exponent++; }
+    while (frac < 1.0f)  { frac *= 2.0f; exponent--; }
+
+    // Step 3: Bias exponent
+    int biasedExp = exponent + 127;
+
+    // Step 4: Extract fraction bits
+    frac -= 1.0f; // remove leading 1
+    Bits fracBits(23);
+    for (int i = 0; i < 23; ++i) {
+        frac *= 2.0f;
+        if (frac >= 1.0f) {
+            fracBits[i] = 1;
+            frac -= 1.0f;
+        } else fracBits[i] = 0;
+    }
+
+    // Step 5: Combine into final 32-bit vector
+    bits[0] = sign;
+    Bits expBits(8);
+    for (int i = 7; i >= 0; --i) {
+        expBits[i] = biasedExp % 2;
+        biasedExp /= 2;
+    }
+    for (int i = 0; i < 8; ++i) bits[1 + i] = expBits[i];
+    for (int i = 0; i < 23; ++i) bits[9 + i] = fracBits[i];
+    return bits;
+}
+
+float bitsToFloat(const Bits&  bits) {
+    // Step 1: Extract sign
+    int sign = bits[0];
+
+    // Step 2: Extract exponent
+    int exp = 0;
+    for (int i = 1; i < 9; ++i)
+        exp = (exp << 1) | bits[i];
+    exp -= 127; // remove bias
+
+    // Step 3: Extract fraction
+    float mantissa = 1.0f;
+    float fracWeight = 0.5f;
+    for (int i = 9; i < 32; ++i) {
+        if (bits[i]) mantissa += fracWeight;
+        fracWeight /= 2.0f;
+    }
+
+    // Step 4: Combine
+    float result = mantissa;
+    if (exp > 0) for (int i = 0; i < exp; ++i) result *= 2.0f;
+    else for (int i = 0; i < -exp; ++i) result /= 2.0f;
+    if (sign) result = -result;
+    return result;
+}
+
 
 struct Float32 {
     int sign;        // 0 = positive, 1 = negative
@@ -349,8 +413,10 @@ Float32 decodeFloat32(const Bits& bits) {
 Bits encodeFloat32(const Float32& f) {
     Bits bits(32);
     bits[0] = f.sign;
-    for (int i = 0; i < 8; ++i) bits[1 + i] = f.exponent[i];
-    for (int i = 0; i < 23; ++i) bits[9 + i] = f.fraction[i];
+    for (int i = 0; i < 8; ++i) 
+    bits[1 + i] = f.exponent[i];
+    for (int i = 0; i < 23; ++i) 
+    bits[9 + i] = f.fraction[i];
     return bits;
 }
 
@@ -377,55 +443,95 @@ void alignExponents(Bits& fracA, Bits& fracB, int& expA, int& expB) {
     while (expB < expA) { fracB = shiftRight1Logical(fracB); expB++; }
 }
 
-// ---- Float addition/subtraction main ----
-Bits floatAddSub(const Bits& a, const Bits& b, bool subtract) {
+// Compare two bit-vectors (returns -1 if A<B, 0 if equal, 1 if A>B)
+int compareBits(const Bits &A, const Bits &B) {
+    int n = A.size();
+    for (int i = 0; i < n; ++i) {
+        if (A[i] != B[i]) return (A[i] > B[i]) ? 1 : -1;
+    }
+    return 0;
+}
+
+// Increment exponent by +1 using bit logic
+Bits incExp(const Bits &exp) {
+    Bits one = zeros(exp.size());
+    one[exp.size() - 1] = 1;
+    int carry = 0;
+    return addBits(exp, one, carry);
+}
+
+// Decrement exponent by -1 using bit logic
+Bits decExp(const Bits &exp) {
+    Bits one = zeros(exp.size());
+    one[exp.size() - 1] = 1;
+    Bits negOne = negateTwos(one);
+    int carry = 0;
+    return addBits(exp, negOne, carry);
+}
+
+// Core IEEE-754 float add/subtract using bitwise modules only
+Bits floatAddSub(const Bits &a, const Bits &b, bool subtract) {
     Float32 A = decodeFloat32(a);
     Float32 B = decodeFloat32(b);
 
-    // Extract exponent & convert to integer (use bitsToInt for bias)
-    int expA = (int)bitsToInt(signExtendTo(A.exponent, 32));
-    int expB = (int)bitsToInt(signExtendTo(B.exponent, 32));
-    expA -= 127; expB -= 127;  // remove bias
-
-    // Build full 24-bit mantissas (implicit 1 for normals)
-    Bits fracA = Bits(24); fracA[0] = 1;
-    for (int i = 0; i < 23; ++i) fracA[i + 1] = A.fraction[i];
-
-    Bits fracB = Bits(24); fracB[0] = 1;
-    for (int i = 0; i < 23; ++i) fracB[i + 1] = B.fraction[i];
-
-    // Align exponents
-    alignExponents(fracA, fracB, expA, expB);
-    int expRes = expA;
-
-    // Perform addition or subtraction on mantissas
-    Bits resFrac;
-    int carry = 0;
-    if (A.sign == B.sign ^ subtract) {
-        // opposite signs => subtraction
-        Bits negB = negateTwos(fracB);
-        resFrac = addBits(fracA, negB, carry);
-    } else {
-        // same sign => addition
-        resFrac = addBits(fracA, fracB, carry);
+    // 1️⃣  Prepare mantissas (implicit leading 1)
+    Bits fracA(24), fracB(24);
+    fracA[0] = fracB[0] = 1;
+    for (int i = 0; i < 23; ++i) {
+        fracA[i + 1] = A.fraction[i];
+        fracB[i + 1] = B.fraction[i];
     }
 
-    // Normalize result mantissa
-    NormResult norm = normalizeFrac(resFrac, expRes);
-    resFrac = norm.frac;
-    expRes += norm.expAdjust;
+    // 2️⃣  Align exponents
+    Bits expA = A.exponent, expB = B.exponent;
+    while (compareBits(expA, expB) < 0) { // expA < expB
+        fracA = shiftRight1Logical(fracA);
+        expA = incExp(expA);
+    }
+    while (compareBits(expB, expA) < 0) { // expB < expA
+        fracB = shiftRight1Logical(fracB);
+        expB = incExp(expB);
+    }
+    Bits expRes = expA; // now aligned
 
-    // Re-bias exponent
-    int biasedExp = expRes + 127;
-    Bits expBits = intToBits(biasedExp, 8);
+    // 3️⃣  Handle subtraction flag
+    Bits opB = fracB;
+    if (subtract) {
+        // Flip sign for subtraction
+        B.sign = !B.sign;
+    }
 
-    // Rebuild Float32
-   Float32 R;
-    R.sign = (A.sign ^ subtract) ? 1 : 0;
-    R.exponent = expBits;
+    // 4️⃣  Add/Subtract mantissas based on sign
+    Bits resFrac;
+    int carry = 0;
+
+    if (A.sign == B.sign) {
+        resFrac = addBits(fracA, fracB, carry);
+    } else {
+        Bits negFracB = negateTwos(fracB);
+        resFrac = addBits(fracA, negFracB, carry);
+    }
+
+    // 5️⃣  Normalize result (handle overflow)
+    if (carry) {
+        resFrac = shiftRight1Logical(resFrac);
+        expRes = incExp(expRes);
+    }
+
+    // Normalize underflow (leading zeros)
+    while (resFrac[0] == 0 && compareBits(expRes, intToBits(0, 8)) > 0) {
+        resFrac = shiftLeft1(resFrac);
+        expRes = decExp(expRes);
+    }
+
+    // 6️⃣  Build result Float32
+    Float32 R;
+    R.sign = A.sign; // simple rule; can refine with magnitude comparison
+    R.exponent = expRes;
     R.fraction = Bits(23);
     for (int i = 0; i < 23; ++i)
-    R.fraction[i] = resFrac[i + 1];
+        R.fraction[i] = resFrac[i + 1];
+
     return encodeFloat32(R);
 }
 
@@ -440,6 +546,17 @@ Bits floatAddSub(const Bits& a, const Bits& b, bool subtract) {
 // 5. Normalize and round mantissa
 // 6. Re-encode into 32-bit Float32 bit vector
 
+// Helpers for 8-bit exponent arithmetic without host +/-
+static Bits bias127_8() {            // 0b01111111
+    Bits b(8); b[0]=0; 
+    for(int i=1;i<8;++i) 
+    b[i]=1; 
+    
+    return b;
+}
+static Bits one8() { Bits o(8); o[7]=1; return o; }
+
+// Float32 multiply (bit-level, constraint-compliant)
 Bits floatMultiply(const Bits& a, const Bits& b) {
     Float32 A = decodeFloat32(a);
     Float32 B = decodeFloat32(b);
@@ -473,7 +590,7 @@ Bits floatMultiply(const Bits& a, const Bits& b) {
     for(int i=0;i<48;++i) 
     prod48[i] = prod64[16+i];
 
-    // Normalize:
+// Normalize:
     // If prod48[0] == 1  → product in [2.0, 4.0), take mant = prod48[0..23], exp += 1
     // else                → product in [1.0, 2.0), take mant = prod48[1..24], exp stays
     Bits mant24(24);
@@ -495,8 +612,7 @@ Bits floatMultiply(const Bits& a, const Bits& b) {
 }
 
 
-
-
+// ============================= Float32 Display Helper =============================
 void printFloat32(const Bits& bits) {
     Float32 f = decodeFloat32(bits);
     cout << "Float32 bits: " << bitsToHex32(bits)
@@ -508,19 +624,86 @@ void printFloat32(const Bits& bits) {
 
 
 
+struct RegisterFile {
+    vector<Bits> regs; // 32 entries, each 32 bits wide
+
+    RegisterFile() : regs(32, zeros(32)) {}
+
+    // Read a register by index
+    Bits read(int idx) const {
+        if (idx < 0 || idx >= 32) return zeros(32);
+        return regs[idx];
+    }
+
+    // Write to a register (writes to x0 are ignored)
+    void write(int idx, const Bits &value) {
+        if (idx <= 0 || idx >= 32) return; // x0 hardwired to 0
+        regs[idx] = value;
+    }
+
+    // Clear all registers (set to zero)
+    void clear() {
+        for (int i = 0; i < 32; ++i)
+            regs[i] = zeros(32);
+    }
+
+    // Debug printout of selected registers
+    void dump(int from = 0, int to = 7) const {
+        cout << "\n--- Register File Dump (x" << from << "–x" << to << ") ---\n";
+        for (int i = from; i <= to && i < 32; ++i)
+            cout << "x" << setw(2) << i << ": " << bitsToHex32(regs[i]) << "\n";
+    }
+};
+
+// Optional: Floating-point register file (RV32F)
+struct FPRegisterFile {
+    vector<Bits> fregs; // 32 entries, each 32 bits wide
+    FPRegisterFile() : fregs(32, zeros(32)) {}
+
+    Bits read(int idx) const {
+        if (idx < 0 || idx >= 32) return zeros(32);
+        return fregs[idx];
+    }
+
+    void write(int idx, const Bits &value) {
+        if (idx < 0 || idx >= 32) return;
+        fregs[idx] = value;
+    }
+};
+
+// Optional: Floating-Point Control and Status Register (FCSR)
+struct FCSR {
+    Bits frm;     // rounding mode (bits 7–5)
+    Bits fflags;  // exception flags (bits 4–0)
+
+    FCSR() : frm(zeros(3)), fflags(zeros(5)) {}
+
+    void print() const {
+        cout << "FCSR: frm=" << bitsToHexN(frm)
+             << " fflags=" << bitsToHexN(fflags) << "\n";
+    }
+};
+
+
 // ============================= Section 3: Main (demo / quick tests) =============================
 int main(){
-    cout << "===== Numeric Operations Simulator (RV32 ALU + M Extension) =====\n";
 
-    // ---- Get two integers from user for ADD/SUB demo ----
-/*     int num1, num2; cout << "Enter two integers for ADD/SUB: "; if(!(cin>>num1>>num2)){ cout<<"\nInput error.\n"; return 0; }
- */    
-    int num1 = -15, num2 = -5;
+
+    // ================================================================
+    // 1️⃣ Two’s Complement Encode/Decode Tests
+    // ================================================================
+    cout << "\n===== Two’s-Complement Encoding/Decoding 1 =====\n";    
+    int num1 = -5, num2 = -5;
     Bits A=intToBits(num1), B=intToBits(num2);
 
     cout << "\n--- Input Encodings ---\n";
     cout << num1 << " -> bin " << bitsToBinStr(A) << ", hex " << bitsToHex32(A) << "\n";
     cout << num2 << " -> bin " << bitsToBinStr(B) << ", hex " << bitsToHex32(B) << "\n";
+
+    // ================================================================
+    // 2️⃣ ALU ADD/SUB with Flags
+    // ================================================================
+    cout << "\n===== ALU ADD/SUB Tests 1 =====\n";
 
     // ADD
     auto add = ALU(A,B,false);
@@ -534,8 +717,10 @@ int main(){
     printALUTrace("SUB",A,B,sub.result,sub.flags);
     cout << "Decoded result = " << bitsToInt(sub.result) << "\n";
 
-    // ---- M Extension demos (match spec expectations) ----
-    cout << "\n===== M Extension Demos =====\n";
+    // ================================================================
+    // 3️⃣ M Extension (Multiply/Divide)
+    // ================================================================
+    cout << "\n===== M Extension (MUL/DIV) 1 =====\n";
 
     cout << "MULT: "<<num1<<" * "<<num2;
     Bits M1=intToBits(num1), M2=intToBits(num2);
@@ -544,46 +729,101 @@ int main(){
     cout << "MUL low32 = "<<bitsToHex32(mss.low32)<<" overflow="<<mss.overflow<<"\n";
     cout << "MULH high32 = "<<bitsToHex32(mss.high32)<<"\n";
 
-    // DIV -7 / 3
 
     cout << "\nDIV: "<<num1<<" / "<<num2;
     Bits D1=intToBits(num1), D2=intToBits(num2);
     auto ds = div_signed(D1,D2,true);
     printDivResultSigned(D1,D2,ds);
 
-    // DIVU 0x80000000 / 3
+    
     Bits UA=intToBits(num1), UB=intToBits(num2);
     auto du = divu_restoring(UA,UB,true);
     printDivResultUnsigned(UA,UB,du);
 
 
 
-     
+    // ================================================================
+    // 1️⃣ Two’s Complement Encode/Decode Tests
+    // ================================================================
+    cout << "\n===== Two’s-Complement Encoding/Decoding 2 =====\n";    
+    int num11 = -21, num21 = 3;
+    Bits A1=intToBits(num11), B1=intToBits(num21);
+
+    cout << "\n--- Input Encodings ---\n";
+    cout << num11 << " -> bin " << bitsToBinStr(A1) << ", hex " << bitsToHex32(A1) << "\n";
+    cout << num21 << " -> bin " << bitsToBinStr(B1) << ", hex " << bitsToHex32(B1) << "\n";
+    // ================================================================
+    // 2️⃣ ALU ADD/SUB with Flags
+    // ================================================================
+    cout << "\n===== ALU ADD/SUB Tests 2 =====\n";
+
+    // ADD
+    auto add1 = ALU(A,B,false);
+    cout << "\nAddition: "<<num1<<" + "<<num2<<"\n";
+    printALUTrace("ADD",A,B,add1.result,add1.flags);
+    cout << "Decoded result = " << bitsToInt(add1.result) << "\n";
+
+    // SUB
+    auto sub1 = ALU(A,B,true);
+    cout << "\nSubtraction: "<<num1<<" - "<<num2<<"\n";
+    printALUTrace("SUB",A,B,sub1.result,sub1.flags);
+    cout << "Decoded result = " << bitsToInt(sub1.result) << "\n";
+
+    // ================================================================
+    // 3️⃣ M Extension (Multiply/Divide)
+    // ================================================================
+    cout << "\n===== M Extension (MUL/DIV) 2 =====\n";
+
+    cout << "MULT: "<<num1<<" * "<<num2;
+    Bits M11=intToBits(num1), M21=intToBits(num2);
+    auto mss1 = mul_ss(M11,M21,true); // trace enabled internally (minimal)
+    printMulResult(M11,M21,mss1,"MUL(ss)");
+    cout << "MUL low32 = "<<bitsToHex32(mss1.low32)<<" overflow="<<mss1.overflow<<"\n";
+    cout << "MULH high32 = "<<bitsToHex32(mss1.high32)<<"\n";
+
+    // DIV 21 / 3
+
+    cout << "\nDIV: "<<num1<<" / "<<num2;
+    Bits D21=intToBits(num1), D22=intToBits(num2);
+    auto ds1 = div_signed(D21,D22,true);
+    printDivResultSigned(D21,D22,ds);
+
+    // DIVU 0x80000000 / 3
+    Bits UA1=intToBits(num1), UB1=intToBits(num2);
+    auto du1 = divu_restoring(UA1,UB1,true);
+    printDivResultUnsigned(UA1,UB1,du1);
+
+
+    // ================================================================
+    // 4️⃣ IEEE-754 Float32 Encode/Decode Tests
+    // ================================================================
     cout << "\n===== IEEE-754 Float32 Decode Tests =*****====\n";
 
     // Example: +1.0 (0x3F800000), 25 = 0x41C80000
-    Bits f1 = intToBits(-2.5);
+    Bits f1 = floatToBits(-2.5);
     printFloat32(f1);
 
-    // Example: -2.5 (0xC0200000)         
-    Bits f2 = intToBits(0xC0200000);
+    // Example: -2.5 (0xC0200000)
+    Bits f2 = floatToBits(-2.5);
     printFloat32(f2);
 
-
+    // ================================================================
+    // 5️⃣ IEEE-754 Add/Sub/Multiply Tests
+    // ================================================================
     cout << "\n===== IEEE-754 Float32 Add/Sub Tests =====\n";
 
-    // Example: 1.5 (0x3FC00000) + 2.25 (0x40100000)
-    Bits fA = intToBits(25);
-    Bits fB = intToBits(2.25);
+    // Example: 1.0 (0x3FC00000) + 2.25 (0x40100000)
+    Bits fA = floatToBits(1.0);
+    Bits fB = floatToBits(2.75);
 
-    cout << "\n--- Float XXXXxamples ---\n";
     // Print fA using the Float32 helper (vector<int> can't be streamed directly)
     printFloat32(fA);
-    cout << "\n--- Float XXXXxamples ---\n";
+    printFloat32(fB);
 
     Bits fSum = floatAddSub(fA, fB, false);
-    cout << "Adding 1.5 + 2.25:\n";         // expect 3.75 (0x40700000)
+    cout << "Adding 1.5 + 2.25:" << endl;         // expect 3.75 (0x40700000)
     printFloat32(fSum);
+    cout << "\n";
 
     // Example: 5.5 (0x40B00000) − 2.25 (0x40100000)
     Bits fC = intToBits(0x40B00000);
@@ -593,17 +833,41 @@ int main(){
     printFloat32(fDiff);
 
 
-    cout << "\n===== IEEE-754 Float32 Multiply Tests =====\n";
+    // ========================== MULTIPLY TESTS ==========================
 
-// Example 1: 1.5 * 2.25 = 3.375  (0x3FC00000 * 0x40200000 → 0x40580000)
+    cout << "\n===== IEEE-754 Float32 Multiply Tests 1 =====\n";
+    // Example 1: 1.5 * 2.25 = 3.375  (0x3FC00000 * 0x40100000 → 0x40580000)
     Bits fMulA = intToBits(0x3FC00000);
     Bits fMulB = intToBits(0x40100000);
     Bits fMulR = floatMultiply(fMulA, fMulB);
-    cout << "Multiplying 1.5 * 2.25:\n"; 
-     // expect 3.375 (0x40580000)    
+    cout << "Multiplying 1.5 * 2.25:\n";      // expect 3.375 (0x40580000)
     printFloat32(fMulR);
 
 
-    cout << "\nDone.\n";
+        cout << "\n===== IEEE-754 Float32 Multiply Tests 2 =====\n";
+    // Example 1: 2.125 * 9.25 = 19.65625  (0x3FC00000 * 0x40100000 → 0x40580000)
+    Bits fMulA1 = intToBits(0x40080000);
+    Bits fMulB1 = intToBits(0x41140000);
+    Bits fMulR1 = floatMultiply(fMulA1, fMulB1);
+    cout << "Multiplying 2.125 * 9.25:\n";      // expect 19.65625 (0x419D4000)
+    printFloat32(fMulR1);
+
+
+        cout << "\n===== IEEE-754 Float32 Multiply Tests 3 =====\n";
+    // Example 1: 12.750 * 1.375 = 14.172  (0x414C0000 * 0x3F8E147B → 0x4163B851)
+    Bits fMulA2 = intToBits(0x414C0000);
+    Bits fMulB2 = intToBits(0x3FB00000);
+    Bits fMulR2 = floatMultiply(fMulA2, fMulB2);
+    cout << "Multiplying 12.750 * 1.375:\n";      // expect  17.53125(0x418C4000)
+    printFloat32(fMulR2);
+
+
+
+    // Example demo in main():
+    RegisterFile rf;
+    Bits val = intToBits(123);
+    rf.write(5, val);
+    rf.dump(0, 7);
+
     return 0;
 }
