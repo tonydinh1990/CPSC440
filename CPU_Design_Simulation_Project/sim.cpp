@@ -2,26 +2,41 @@
 using namespace std;
 
 // ============================== Small helper macros ==============================
-// Extract bits from a 32-bit word
+// Extract bits from a 32-bit word - bits [hi:lo], inclusive, 0-based from LSB
 static inline uint32_t get_bits(uint32_t x, int hi, int lo) {
     // inclusive [hi:lo], 0-based from LSB
-    uint32_t width = (uint32_t)(hi - lo + 1);
-    uint32_t mask = (width >= 32) ? 0xFFFFFFFFu : ((1u << width) - 1u);
-    return (x >> lo) & mask;
+    uint32_t width;         // to hold width
+    uint32_t mask;         // mask for width bits
+
+    width = (uint32_t)(hi - lo + 1);            // to hold width of bits
+    mask = (width >= 32) ? 0xFFFFFFFFu : ((1u << width) - 1u);      // mask for width bits
+    return (x >> lo) & mask;            // return the bits
 }
 
 // Converts a smaller signed number (like 12-bit immediate) into a 32-bit signed value.
 static inline int32_t sign_extend(uint32_t val, int from_bits) {
     // Extend 'from_bits'-wide signed value to 32-bit signed
-    uint32_t sign_bit = 1u << (from_bits - 1);
-    uint32_t mask = (from_bits >= 32) ? 0xFFFFFFFFu : ((1u << from_bits) - 1u);
-    uint32_t v = val & mask;
+    uint32_t sign_bit;      // sign bit mask
+    uint32_t mask;          // mask for from_bits
+    uint32_t v;             // value after extension
+
+    sign_bit= 1u << (from_bits - 1);        // calculate sign bit
+    // Avoid shifting by 32 (undefined) — use an if/else instead of the ternary
+    if (from_bits >= 32) {
+        mask = 0xFFFFFFFFu;
+    } else {
+        mask = ((1u << from_bits) - 1u);
+    }
+
+    v = val & mask;             //v to hold value after extension
+    
+    // to check if sign bit is set
     if (v & sign_bit) {
         // negative
-        uint32_t ext_mask = ~mask;
-        v |= ext_mask;
+        uint32_t ext_mask = ~mask;          // mask for extension
+        v |= ext_mask;                      // extend by setting upper bits to 1
     }
-    return (int32_t)v;
+    return (int32_t)v;                      // return extended value
 }
 
 // ============================== Memory model ==============================
@@ -153,9 +168,9 @@ struct CPU {
         while (getline(fin, line)) {
             // trim spaces
             auto trim = [](string &s){                          // trim leading/trailing spaces
-                size_t a = s.find_first_not_of(" \t\r\n");
-                size_t b = s.find_last_not_of(" \t\r\n");
-                if (a == string::npos) { s.clear(); return; }
+                size_t a = s.find_first_not_of(" \t\r\n");  // inclusive
+                size_t b = s.find_last_not_of(" \t\r\n");       // inclusive
+                if (a == string::npos) { s.clear(); return; }       
                 s = s.substr(a, b - a + 1);
             };
             trim(line);
@@ -478,3 +493,4 @@ static void dump_mem_words(const Mem &m, uint32_t addr, size_t words, ostream &o
 
     return 0;
 }
+
