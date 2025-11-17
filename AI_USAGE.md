@@ -49,3 +49,8 @@ Debugging & Output
 - Full hand-coding of all bitwise logic, vector operations, and test cases.  
 - Manual debugging of ALU, MDU, and FPU operations in C++.  
 - Hand-written tests to validate overflow and normalization behavior.  
+
+
+
+here are some prompt usage of AI <img width="1096" height="1056" alt="image" src="https://github.com/user-attachments/assets/506dd4f8-7dc4-48b6-8808-d61892fe460a" />
+
