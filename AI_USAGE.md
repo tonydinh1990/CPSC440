@@ -58,4 +58,7 @@ here are some prompt usage of AI <img width="1096" height="1056" alt="image" src
 <img width="1002" height="1056" alt="image" src="https://github.com/user-attachments/assets/14a0cdee-be01-445f-89ff-fd4dfe2bc726" />
 <img width="1002" height="1056" alt="image" src="https://github.com/user-attachments/assets/7ffb6cfb-3616-4243-9d43-c119a769bb26" />
 
+On this image, i asked chat why my ouput is wrong AGAIN and then chatgpt explained the concept to me.
+<img width="1002" height="1056" alt="image" src="https://github.com/user-attachments/assets/05c0bbda-d219-47c9-a930-210941f86ddd" />
 
+Most of the things I asked chatgpt are debugging and yet OFTEN give incorrect information or solution while copilot are even worse than chatgpt. Overall, nearly all my code are manually written.
